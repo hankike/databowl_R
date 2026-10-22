@@ -1,0 +1,238 @@
+---
+title: "Phase II Hank Eichstaedt"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+players <- read.csv("C:/Users/hanke/Projects/Big_Data_Bowl_27/data/players.csv")
+game_tracking_2023 <- read.csv("C:/Users/hanke/Projects/Big_Data_Bowl_27/data/game_tracking_2023.csv")
+player_play <- read.csv("C:/Users/hanke/Projects/Big_Data_Bowl_27/data/player_play.csv")
+combine_results <- read.csv("C:/Users/hanke/Projects/Big_Data_Bowl_27/data/combine_results.csv")
+combine_tracking <- read.csv("C:/Users/hanke/Projects/Big_Data_Bowl_27/data/combine_tracking.csv")
+```
+
+# Pass Rushing and Determining Moves and Success
+
+## Cleaning Data
+
+First, we need to find our player Will Anderson.
+```{r}
+players %>%
+  filter(display_name == "Will Anderson") %>%
+  pull(nfl_id)
+```
+
+After finding our player, we need to clean our data. We will first separate Will Anderson into his own player description then filter this data frame into only the aspects we want.
+
+```{r}
+anderson_position = player_play %>%
+  filter(nfl_id == 55867)
+
+anderson_position = anderson_position %>%
+  select(game_id, play_id, lined_up_position, pass_result, player_get_off)
+
+anderson_position = anderson_position %>%
+  filter(!is.na(pass_result), pass_result != "")
+
+anderson_position = anderson_position %>%
+  filter(!is.na(player_get_off))
+```
+
+Next, we find every snap that Will Anderson was involved in, filter them for only position at ball snap, and then add a new column to represent direction being faced.
+
+```{r}
+will_anderson <- game_tracking_2023 %>%
+  filter(nfl_id == 55867)
+
+snap = will_anderson %>%
+  filter(
+    event == "ball_snap"
+  )
+
+snap = snap %>%
+  mutate(body_orientation = case_when(
+    o >= 0   & o <= 36  ~ "Left",
+    o > 36   & o <= 72  ~ "Forward Left",
+    o > 72   & o <= 108 ~ "Forward",
+    o > 108  & o <= 144 ~ "Forward Right",
+    o > 144  & o <= 180 ~ "Right",
+    o > 180  & o <= 216 ~ "Left",
+    o > 216  & o <= 252 ~ "Forward Left",
+    o > 252  & o <= 288 ~ "Forward",
+    o > 288  & o <= 324 ~ "Forward Right",
+    o > 324  & o <= 360 ~ "Right",
+    TRUE ~ NA_character_ 
+  ))
+```
+
+Finally, we combine our two data sets and filter out any play where Anderson was not listed as on the field.
+
+```{r}
+combined_df = anderson_position %>%
+  left_join(snap, by = c("game_id", "play_id"))
+
+combined_df = combined_df %>%
+  filter(!is.na(x))
+```
+
+## ANOVA Testing
+
+We have our cleaned data set, now we need to run our ANOVA test.
+
+```{r}
+anova_model = aov(
+  player_get_off ~ body_orientation,
+  data = combined_df
+)
+
+summary(anova_model)
+```
+
+As we can see, there are signifcant values in this ANOVA test. Let us now visualize this with a box plot
+
+```{r}
+ggplot(combined_df, aes(
+  x = body_orientation,
+  y = player_get_off
+)) +
+  geom_boxplot() +
+  labs(
+    title = "Player Get-Off by Body Orientation",
+    x = "Body Orientation",
+    y = "Player Get-Off"
+  ) +
+  theme_minimal()
+```
+
+This box plot shows some nice details, but let's go one step further and look directly at our means and standard deviations
+
+```{r}
+combined_df %>%
+  group_by(body_orientation) %>%
+  summarise(
+    n = sum(!is.na(player_get_off)),
+    mean_get_off = mean(player_get_off, na.rm = TRUE),
+    sd_get_off = sd(player_get_off, na.rm = TRUE)
+  ) %>%
+  arrange(desc(mean_get_off))
+```
+
+## Discussion
+
+The information found here is promising in showing significance based on variables provided in the Big Data Bowl. There is still much exploration to do, and correlation between combine tests and our results here must still be completed.
+
+```{r}
+ggplot(play_55, aes(x = x, y = y)) +
+  geom_hline(
+    yintercept = 23.61,
+    color = "black",
+    linetype = "dashed",
+    linewidth = 0.8
+  ) +
+  geom_hline(
+    yintercept = 29.69,
+    color = "black",
+    linetype = "dashed",
+    linewidth = 0.8
+  ) +
+  geom_path(color = "blue", linewidth = 0.7) +
+  geom_point(color = "red", size = 1.5) +
+  annotate(
+    "segment",
+    x = 84.2, xend = 84.2,
+    y = 30.5, yend = 31.7,
+    color = "green",
+    linewidth = 1
+  ) +
+  coord_cartesian(
+    xlim = range(play_55$x, na.rm = TRUE) + c(-1, 1),
+    ylim = range(c(play_55$y, 20.5, 32.7), na.rm = TRUE) +
+      c(-1, 1)
+  ) +
+  scale_x_continuous(
+    breaks = scales::breaks_pretty(n = 6)
+  ) +
+  scale_y_continuous(
+    breaks = scales::breaks_pretty(n = 6)
+  ) +
+  labs(
+    title = "Will Anderson's Movement - Snap One on 11/12/23",
+    x = "Yardlines",
+    y = "Width"
+  ) +
+  theme_minimal()
+```
+
+# Who Is Getting Open?
+
+## Cleaning Data
+
+First we need to find all of the recivers from our data. We are choosing from 2023 here.
+
+```{r}
+wr = player_play %>%
+  filter(lined_up_position == "WR" |
+         lined_up_position == "Slot_WR")
+
+wr = wr %>%
+  select(game_id, play_id, nfl_id, lined_up_position, route_ran, in_motion_at_ball_snap,
+         team_coverage_man_zone, team_coverage_type, target, separation_at_pass_forward)
+
+wr = wr %>%
+  filter(!is.na(separation_at_pass_forward))
+```
+
+By removing all values where separation is null we should only be including plays where the receiver is trying to get open, and thus can be graded.
+
+From earlier we have combine statistics of all of our players, so we can join these values onto our wr data set so we can run correlation tests.
+
+```{r}
+wr_combined = wr %>%
+  inner_join(
+    combine_results %>% select(nfl_id, forty, ten_yd_split, vertical,
+                            broad_jump, three_cone, short_shuttle, ngs_athleticism_score),
+    by = "nfl_id"
+  )
+```
+
+## Correlation
+
+In order to run a correlation test we need to first choose our variables and then run a Pearson test on these with our separation metric.
+
+```{r}
+variables = c("forty", "ten_yd_split", "vertical", "broad_jump", "three_cone",
+              "short_shuttle", "ngs_athleticism_score")
+
+cor_results = map_dfr(variables, function(var) {
+  
+  data <- wr_combined %>%
+    select(separation_at_pass_forward, all_of(var)) %>%
+    filter(complete.cases(.))
+  
+  test <- cor.test(
+    data$separation_at_pass_forward,
+    data[[var]],
+    method = "pearson"
+  )
+  
+  tibble(
+    variable = var,
+    n = nrow(data),
+    correlation = unname(test$estimate),
+    p_value = test$p.value
+  )
+}) %>%
+  mutate(adjusted_p = p.adjust(p_value, method = "BH")) %>%
+  arrange(p_value)
+
+cor_results
+```
+
+From here we can see that correlation is not extremely strong between our combine tests and separation. However, the p values are significant so we know these correlation values are almost exact what the correlation actually is. Some of the results makes sense, a lower forty time would absolutely lead to better separation. It also appears that the athletic score the combine attaches is useless in correlation.
+
+In sports we talk about correlation not needing to be as high as a field such as physics. The tough part about a correlation test like the one performed here is we must determine if these correlation figures lie in the "actually significant derspite lower numbers" field or not. I think further testing would be the only way to find this out.
